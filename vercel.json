@@ -1,0 +1,9 @@
+{
+  "version": 2,
+  "buildCommand": "cd farm-direct-frontend && npm install && npm run build",
+  "outputDirectory": "farm-direct-frontend/build",
+  "framework": null,
+  "rewrites": [
+    { "source": "/(.*)", "destination": "/index.html" }
+  ]
+}
