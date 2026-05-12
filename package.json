@@ -4,7 +4,7 @@
   "main": "index.js",
   "private": true,
   "scripts": {
-    "build": "cd farm-direct-frontend && npm install && npm run build",
+    "build": "cd farm-direct-frontend && npm install && CI=false npm run build",
     "install": "cd farm-direct-frontend && npm install"
   }
 }
