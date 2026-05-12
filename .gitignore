@@ -12,9 +12,14 @@ yarn-error.log*
 .env.production.local
 
 # Build output
-/build
-/dist
+build/
+dist/
+farm-direct-frontend/build/
 
 # OS files
 .DS_Store
 Thumbs.db
+
+# Junk/Temp files
+backend/nodemon
+backend/freshfarm-backend@1.0.0
