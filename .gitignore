@@ -23,3 +23,4 @@ Thumbs.db
 # Junk/Temp files
 backend/nodemon
 backend/freshfarm-backend@1.0.0
+.vercel

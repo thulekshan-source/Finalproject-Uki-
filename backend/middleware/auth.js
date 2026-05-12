@@ -1,5 +1,5 @@
 const jwt = require('jsonwebtoken');
-const User = require('../models/User');
+const prisma = require('../utils/prisma');
 
 // protect routes — verify JWT
 exports.protect = async (req, res, next) => {
@@ -14,8 +14,8 @@ exports.protect = async (req, res, next) => {
   }
 
   try {
-    const decoded = jwt.verify(token, process.env.JWT_SECRET);
-    req.user = await User.findById(decoded.id);
+    const decoded = jwt.verify(token, process.env.JWT_SECRET || 'secretkey');
+    req.user = await prisma.user.findUnique({ where: { id: parseInt(decoded.id) } });
 
     if (!req.user) {
       return res.status(401).json({ success: false, message: 'User not found' });
@@ -41,7 +41,7 @@ exports.authorize = (...roles) => {
   };
 };
 
-//  routes use isFarmer — was missing
+//  routes use isFarmer
 exports.isFarmer = (req, res, next) => {
   if (req.user.userType !== 'farmer' && req.user.userType !== 'admin') {
     return res.status(403).json({ success: false, message: 'Only farmers can access this route' });
@@ -49,7 +49,7 @@ exports.isFarmer = (req, res, next) => {
   next();
 };
 
-//  routes use isAdmin — was missing
+//  routes use isAdmin
 exports.isAdmin = (req, res, next) => {
   if (req.user.userType !== 'admin') {
     return res.status(403).json({ success: false, message: 'Only admins can access this route' });
@@ -57,10 +57,17 @@ exports.isAdmin = (req, res, next) => {
   next();
 };
 
-//  productRoutes uses checkOwnership(Model) — was missing
-exports.checkOwnership = (Model) => async (req, res, next) => {
+// Simplified checkOwnership for Prisma
+exports.checkOwnership = (modelName) => async (req, res, next) => {
   try {
-    const doc = await Model.findById(req.params.id);
+    const id = parseInt(req.params.id);
+    let doc;
+
+    if (modelName === 'Product') {
+      doc = await prisma.product.findUnique({ where: { id } });
+    } else if (modelName === 'Order') {
+      doc = await prisma.order.findUnique({ where: { id } });
+    }
 
     if (!doc) {
       return res.status(404).json({ success: false, message: 'Resource not found' });
@@ -69,8 +76,8 @@ exports.checkOwnership = (Model) => async (req, res, next) => {
     // admin can always proceed
     if (req.user.userType === 'admin') return next();
 
-    const ownerId = doc.farmer ? doc.farmer.toString() : doc.user?.toString();
-    if (ownerId !== req.user.id.toString()) {
+    const ownerId = doc.farmerId || doc.userId;
+    if (ownerId !== req.user.id) {
       return res.status(403).json({ success: false, message: 'Not authorized to modify this resource' });
     }
 
@@ -79,6 +86,7 @@ exports.checkOwnership = (Model) => async (req, res, next) => {
     next(error);
   }
 };
+
 module.exports = {
   protect: exports.protect,
   authorize: exports.authorize,

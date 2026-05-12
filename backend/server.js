@@ -1,10 +1,10 @@
 const express = require('express');
-const mongoose = require('mongoose');
 const cors = require('cors');
 const helmet = require('helmet');
 const morgan = require('morgan');
 const path = require('path');
 require('dotenv').config();
+const prisma = require('./utils/prisma');
 
 const authRoutes = require('./routes/authRoutes');
 const userRoutes = require('./routes/userRoutes');
@@ -27,12 +27,12 @@ if (process.env.NODE_ENV === 'development') {
   app.use(morgan('dev'));
 }
 
-// connect to MongoDB
-mongoose.connect(process.env.MONGODB_URI)
-  .then(() => console.log('MongoDB connected'))
-  .catch(err => console.error('MongoDB connection error:', err));
+// Verify Prisma connection
+prisma.$connect()
+  .then(() => console.log('PostgreSQL connected via Prisma'))
+  .catch(err => console.error('PostgreSQL connection error:', err));
 
-//  original server.js was missing userRoutes, productRoutes, orderRoutes
+// Routes
 app.use('/api/auth', authRoutes);
 app.use('/api/users', userRoutes);
 app.use('/api/products', productRoutes);
@@ -40,7 +40,7 @@ app.use('/api/orders', orderRoutes);
 
 // health check
 app.get('/api/health', (req, res) => {
-  res.json({ success: true, message: 'FreshFarm API is running', env: process.env.NODE_ENV });
+  res.json({ success: true, message: 'FreshFarm API is running (Postgres)', env: process.env.NODE_ENV });
 });
 
 // 404 handler
@@ -53,7 +53,7 @@ app.use(errorHandler);
 
 // Only listen if not running as a Vercel function
 if (process.env.NODE_ENV !== 'production' || !process.env.VERCEL) {
-  const PORT = process.env.PORT || 5000;
+  const PORT = process.env.PORT || 5005;
   app.listen(PORT, () => {
     console.log(`Server running on port ${PORT} in ${process.env.NODE_ENV || 'development'} mode`);
   });

@@ -1,0 +1,176 @@
+generator client {
+  provider = "prisma-client-js"
+}
+
+datasource db {
+  provider = "postgresql"
+}
+
+enum UserType {
+  customer
+  farmer
+  admin
+}
+
+model User {
+  id            Int      @id @default(autoincrement())
+  name          String
+  email         String   @unique
+  password      String
+  userType      UserType @default(customer)
+  phone         String?  @default("")
+  address       String?  @default("")
+  profileImage  String?  @default("")
+  farmName      String?  @default("")
+  location      String?  @default("")
+  bio           String?  @default("")
+  isVerified    Boolean  @default(false)
+  isActive      Boolean  @default(true)
+  totalEarnings Float    @default(0)
+  storageLimit  Float    @default(1000)
+  createdAt     DateTime @default(now())
+  updatedAt     DateTime @updatedAt
+
+  products      Product[] @relation("FarmerProducts")
+  orders        Order[]   @relation("UserOrders")
+  farmerOrders  Order[]   @relation("FarmerOrders")
+  favorites     Favorite[]
+}
+
+model Category {
+  id        Int      @id @default(autoincrement())
+  name      String   @unique
+  createdAt DateTime @default(now())
+}
+
+enum ProductCategory {
+  vegetables
+  fruits
+  dairy
+  grains
+  poultry
+  others
+}
+
+enum ProductUnit {
+  kg
+  g
+  liter
+  piece
+  dozen
+  pack
+}
+
+model Product {
+  id               Int             @id @default(autoincrement())
+  name             String
+  description      String
+  price            Float
+  category         ProductCategory
+  unit             ProductUnit
+  stock            Float           @default(0)
+  farmerId         Int
+  farmer           User            @relation("FarmerProducts", fields: [farmerId], references: [id])
+  farmName         String
+  images           String[]
+  rating           Float           @default(0)
+  numReviews       Int             @default(0)
+  isOrganic        Boolean         @default(false)
+  discount         Float           @default(0)
+  tags             String[]
+  isAvailable      Boolean         @default(true)
+  minOrderQuantity Float           @default(1)
+  maxOrderQuantity Float           @default(100)
+  isFeatured       Boolean         @default(false)
+  isBestSeller     Boolean         @default(false)
+  harvestDate      DateTime?
+  expiryDate       DateTime?
+  weight           Float?
+  createdAt        DateTime        @default(now())
+  updatedAt        DateTime        @updatedAt
+
+  orderItems       OrderItem[]
+  favorites        Favorite[]
+
+  @@index([category])
+  @@index([farmerId])
+}
+
+model Favorite {
+  id        Int      @id @default(autoincrement())
+  userId    Int
+  productId Int
+  user      User     @relation(fields: [userId], references: [id])
+  product   Product  @relation(fields: [productId], references: [id])
+
+  @@unique([userId, productId])
+}
+
+enum PaymentMethod {
+  cash_on_delivery
+  card
+  online_banking
+  wallet
+}
+
+enum PaymentStatus {
+  pending
+  paid
+  failed
+  refunded
+  cancelled
+}
+
+enum OrderStatus {
+  pending
+  confirmed
+  processing
+  shipped
+  delivered
+  cancelled
+  returned
+}
+
+model Order {
+  id                Int           @id @default(autoincrement())
+  userId            Int
+  user              User          @relation("UserOrders", fields: [userId], references: [id])
+  farmerId          Int
+  farmer            User          @relation("FarmerOrders", fields: [farmerId], references: [id])
+  paymentMethod     PaymentMethod @default(cash_on_delivery)
+  paymentStatus     PaymentStatus @default(pending)
+  itemsPrice        Float         @default(0)
+  shippingPrice     Float         @default(0)
+  taxPrice          Float         @default(0)
+  discount          Float         @default(0)
+  totalPrice        Float         @default(0)
+  orderStatus       OrderStatus   @default(pending)
+  isPaid            Boolean       @default(false)
+  paidAt            DateTime?
+  isDelivered       Boolean       @default(false)
+  deliveredAt       DateTime?
+  notes             String?
+  trackingNumber    String?
+  shippingAddress   Json          // Storing as JSON for simplicity like Mongoose subdoc
+  createdAt         DateTime      @default(now())
+  updatedAt         DateTime      @updatedAt
+
+  items             OrderItem[]
+
+  @@index([userId])
+  @@index([farmerId])
+}
+
+model OrderItem {
+  id         Int      @id @default(autoincrement())
+  orderId    Int
+  order      Order    @relation(fields: [orderId], references: [id])
+  productId  Int
+  product    Product  @relation(fields: [productId], references: [id])
+  name       String
+  quantity   Float
+  price      Float
+  unit       String
+  image      String
+  totalPrice Float
+}

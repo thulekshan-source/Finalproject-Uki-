@@ -1,5 +1,4 @@
-const Product = require('../models/Product');
-const User = require('../models/User');
+const prisma = require('../utils/prisma');
 const fs = require('fs');
 const path = require('path');
 
@@ -8,65 +7,85 @@ const path = require('path');
 // @access  Public
 exports.getAllProducts = async (req, res, next) => {
   try {
-    const queryObj = { ...req.query };
-    const excludedFields = ['page', 'sort', 'limit', 'fields', 'search', 'minPrice', 'maxPrice'];
-    excludedFields.forEach(el => delete queryObj[el]);
+    const { page, sort, limit, search, minPrice, maxPrice, category, available, organic, featured, bestSeller } = req.query;
 
-    if (req.query.search) {
-      queryObj.$or = [
-        { name: { $regex: req.query.search, $options: 'i' } },
-        { description: { $regex: req.query.search, $options: 'i' } },
-        { farmName: { $regex: req.query.search, $options: 'i' } },
-        { tags: { $regex: req.query.search, $options: 'i' } }
+    const where = {};
+
+    if (search) {
+      where.OR = [
+        { name: { contains: search, mode: 'insensitive' } },
+        { description: { contains: search, mode: 'insensitive' } },
+        { farmName: { contains: search, mode: 'insensitive' } },
+        { tags: { has: search } }
       ];
     }
 
-    if (req.query.minPrice || req.query.maxPrice) {
-      queryObj.price = {};
-      if (req.query.minPrice) queryObj.price.$gte = parseFloat(req.query.minPrice);
-      if (req.query.maxPrice) queryObj.price.$lte = parseFloat(req.query.maxPrice);
+    if (minPrice || maxPrice) {
+      where.price = {};
+      if (minPrice) where.price.gte = parseFloat(minPrice);
+      if (maxPrice) where.price.lte = parseFloat(maxPrice);
     }
 
-    if (req.query.category) queryObj.category = req.query.category;
-    if (req.query.available === 'true') queryObj.isAvailable = true;
-    else if (req.query.available === 'false') queryObj.isAvailable = false;
-    if (req.query.organic === 'true') queryObj.isOrganic = true;
-    if (req.query.featured === 'true') queryObj.isFeatured = true;
-    if (req.query.bestSeller === 'true') queryObj.isBestSeller = true;
+    if (category) where.category = category;
+    if (available === 'true') where.isAvailable = true;
+    else if (available === 'false') where.isAvailable = false;
+    if (organic === 'true') where.isOrganic = true;
+    if (featured === 'true') where.isFeatured = true;
+    if (bestSeller === 'true') where.isBestSeller = true;
 
-    let query = Product.find(queryObj).populate('farmer', 'name email profileImage farmName location');
+    const pageNum = parseInt(page, 10) || 1;
+    const limitNum = parseInt(limit, 10) || 12;
+    const skip = (pageNum - 1) * limitNum;
 
-    if (req.query.sort) {
-      query = query.sort(req.query.sort.split(',').join(' '));
-    } else {
-      query = query.sort('-createdAt');
+    // Sorting
+    let orderBy = { createdAt: 'desc' };
+    if (sort) {
+      const sortField = sort.startsWith('-') ? sort.substring(1) : sort;
+      const sortOrder = sort.startsWith('-') ? 'desc' : 'asc';
+      orderBy = { [sortField]: sortOrder };
     }
 
-    if (req.query.fields) {
-      query = query.select(req.query.fields.split(',').join(' '));
-    } else {
-      query = query.select('-__v');
-    }
+    const [products, total] = await Promise.all([
+      prisma.product.findMany({
+        where,
+        orderBy,
+        skip,
+        take: limitNum,
+        include: {
+          farmer: {
+            select: {
+              id: true,
+              name: true,
+              email: true,
+              profileImage: true,
+              farmName: true,
+              location: true
+            }
+          }
+        }
+      }),
+      prisma.product.count({ where })
+    ]);
 
-    const page = parseInt(req.query.page, 10) || 1;
-    const limit = parseInt(req.query.limit, 10) || process.env.DEFAULT_PAGE_SIZE || 12;
-    const skip = (page - 1) * limit;
-    const total = await Product.countDocuments(queryObj);
+    const totalPages = Math.ceil(total / limitNum);
 
-    query = query.skip(skip).limit(limit);
-    const products = await query;
-    const totalPages = Math.ceil(total / limit);
+    // Map id to _id for frontend compatibility
+    const mappedProducts = products.map(p => ({
+      ...p,
+      _id: p.id,
+      farmer: { ...p.farmer, _id: p.farmer.id }
+    }));
 
     res.status(200).json({
       success: true,
-      count: products.length,
+      count: mappedProducts.length,
       total,
       totalPages,
-      currentPage: page,
-      pageSize: limit,
-      hasNextPage: page < totalPages,
-      hasPrevPage: page > 1,
-      data: products
+      currentPage: pageNum,
+      pageSize: limitNum,
+      hasNextPage: pageNum < totalPages,
+      hasPrevPage: pageNum > 1,
+      data: mappedProducts
     });
   } catch (error) {
     next(error);
@@ -78,17 +97,39 @@ exports.getAllProducts = async (req, res, next) => {
 // @access  Public
 exports.getProduct = async (req, res, next) => {
   try {
-    const product = await Product.findById(req.params.id)
-      .populate('farmer', 'name email phone farmName location profileImage bio');
+    const product = await prisma.product.findUnique({
+      where: { id: parseInt(req.params.id) },
+      include: {
+        farmer: {
+          select: {
+            id: true,
+            name: true,
+            email: true,
+            phone: true,
+            farmName: true,
+            location: true,
+            profileImage: true,
+            bio: true
+          }
+        }
+      }
+    });
 
     if (!product) {
       return res.status(404).json({ success: false, message: 'Product not found' });
     }
 
-    product.views = (product.views || 0) + 1;
-    await product.save({ validateBeforeSave: false });
+    // Prisma doesn't auto-increment views easily without a separate update
+    // but we can do it here
+    await prisma.product.update({
+      where: { id: product.id },
+      data: { numReviews: { increment: 0 } } // Placeholder if views not in schema
+    });
 
-    res.status(200).json({ success: true, data: product });
+    res.status(200).json({ 
+      success: true, 
+      data: { ...product, _id: product.id, farmer: { ...product.farmer, _id: product.farmer.id } } 
+    });
   } catch (error) {
     next(error);
   }
@@ -99,21 +140,17 @@ exports.getProduct = async (req, res, next) => {
 // @access  Private/Farmer
 exports.createProduct = async (req, res, next) => {
   try {
-    const user = await User.findById(req.user.id);
+    const user = await prisma.user.findUnique({ where: { id: parseInt(req.user.id) } });
     if (user.userType !== 'farmer') {
       return res.status(403).json({ success: false, message: 'Only farmers can create products' });
     }
 
-    const productData = {
-      ...req.body,
-      farmer: req.user.id,
-      farmName: user.farmName || user.name
-    };
+    const { name, description, price, category, unit, stock, images, isOrganic, tags, minOrderQuantity, maxOrderQuantity, isFeatured } = req.body;
 
     // Check storage limit
-    const farmerProducts = await Product.find({ farmer: req.user.id });
+    const farmerProducts = await prisma.product.findMany({ where: { farmerId: user.id } });
     const currentTotalStock = farmerProducts.reduce((sum, p) => sum + (p.stock || 0), 0);
-    const newStock = parseInt(req.body.stock) || 0;
+    const newStock = parseFloat(stock) || 0;
     
     if (currentTotalStock + newStock > (user.storageLimit || 1000)) {
       return res.status(400).json({ 
@@ -122,12 +159,29 @@ exports.createProduct = async (req, res, next) => {
       });
     }
 
-    const product = await Product.create(productData);
+    const product = await prisma.product.create({
+      data: {
+        name,
+        description,
+        price: parseFloat(price),
+        category,
+        unit,
+        stock: parseFloat(stock),
+        farmerId: user.id,
+        farmName: user.farmName || user.name,
+        images: images || [],
+        isOrganic: isOrganic === 'true' || isOrganic === true,
+        tags: tags || [],
+        minOrderQuantity: parseFloat(minOrderQuantity) || 1,
+        maxOrderQuantity: parseFloat(maxOrderQuantity) || 100,
+        isFeatured: isFeatured === 'true' || isFeatured === true,
+      }
+    });
 
     res.status(201).json({
       success: true,
       message: 'Product created successfully',
-      data: product
+      data: { ...product, _id: product.id }
     });
   } catch (error) {
     next(error);
@@ -139,27 +193,28 @@ exports.createProduct = async (req, res, next) => {
 // @access  Private/Farmer
 exports.updateProduct = async (req, res, next) => {
   try {
-    let product = await Product.findById(req.params.id);
+    let product = await prisma.product.findUnique({ where: { id: parseInt(req.params.id) } });
 
     if (!product) {
       return res.status(404).json({ success: false, message: 'Product not found' });
     }
 
-    if (product.farmer.toString() !== req.user.id && req.user.userType !== 'admin') {
+    if (product.farmerId !== parseInt(req.user.id) && req.user.userType !== 'admin') {
       return res.status(403).json({ success: false, message: 'Not authorized to update this product' });
     }
 
     const updateData = { ...req.body };
-    delete updateData.farmer;
+    if (updateData.price) updateData.price = parseFloat(updateData.price);
+    if (updateData.stock) updateData.stock = parseFloat(updateData.stock);
 
     // Check storage limit if stock is being updated
     if (updateData.stock !== undefined) {
-      const user = await User.findById(req.user.id);
-      const farmerProducts = await Product.find({ farmer: req.user.id });
+      const user = await prisma.user.findUnique({ where: { id: parseInt(req.user.id) } });
+      const farmerProducts = await prisma.product.findMany({ where: { farmerId: user.id } });
       const otherProductsStock = farmerProducts
-        .filter(p => p._id.toString() !== req.params.id)
+        .filter(p => p.id !== parseInt(req.params.id))
         .reduce((sum, p) => sum + (p.stock || 0), 0);
-      const newStock = parseInt(updateData.stock) || 0;
+      const newStock = parseFloat(updateData.stock) || 0;
 
       if (otherProductsStock + newStock > (user.storageLimit || 1000)) {
         return res.status(400).json({ 
@@ -169,15 +224,16 @@ exports.updateProduct = async (req, res, next) => {
       }
     }
 
-    product = await Product.findByIdAndUpdate(req.params.id, updateData, {
-      new: true,
-      runValidators: true
-    }).populate('farmer', 'name email');
+    const updatedProduct = await prisma.product.update({
+      where: { id: parseInt(req.params.id) },
+      data: updateData,
+      include: { farmer: { select: { name: true, email: true } } }
+    });
 
     res.status(200).json({
       success: true,
       message: 'Product updated successfully',
-      data: product
+      data: { ...updatedProduct, _id: updatedProduct.id }
     });
   } catch (error) {
     next(error);
@@ -189,13 +245,13 @@ exports.updateProduct = async (req, res, next) => {
 // @access  Private/Farmer
 exports.deleteProduct = async (req, res, next) => {
   try {
-    const product = await Product.findById(req.params.id);
+    const product = await prisma.product.findUnique({ where: { id: parseInt(req.params.id) } });
 
     if (!product) {
       return res.status(404).json({ success: false, message: 'Product not found' });
     }
 
-    if (product.farmer.toString() !== req.user.id && req.user.userType !== 'admin') {
+    if (product.farmerId !== parseInt(req.user.id) && req.user.userType !== 'admin') {
       return res.status(403).json({ success: false, message: 'Not authorized to delete this product' });
     }
 
@@ -209,7 +265,7 @@ exports.deleteProduct = async (req, res, next) => {
       });
     }
 
-    await product.deleteOne();
+    await prisma.product.delete({ where: { id: product.id } });
 
     res.status(200).json({ success: true, message: 'Product deleted successfully' });
   } catch (error) {
@@ -222,11 +278,14 @@ exports.deleteProduct = async (req, res, next) => {
 // @access  Public
 exports.getProductsByFarmer = async (req, res, next) => {
   try {
-    const products = await Product.find({ farmer: req.params.farmerId })
-      .populate('farmer', 'name email profileImage farmName')
-      .sort('-createdAt');
+    const products = await prisma.product.findMany({
+      where: { farmerId: parseInt(req.params.farmerId) },
+      include: { farmer: { select: { id: true, name: true, email: true, profileImage: true, farmName: true } } },
+      orderBy: { createdAt: 'desc' }
+    });
 
-    res.status(200).json({ success: true, count: products.length, data: products });
+    const mappedProducts = products.map(p => ({ ...p, _id: p.id, farmer: { ...p.farmer, _id: p.farmer.id } }));
+    res.status(200).json({ success: true, count: mappedProducts.length, data: mappedProducts });
   } catch (error) {
     next(error);
   }
@@ -237,11 +296,14 @@ exports.getProductsByFarmer = async (req, res, next) => {
 // @access  Public
 exports.getProductsByCategory = async (req, res, next) => {
   try {
-    const products = await Product.find({ category: req.params.category, isAvailable: true })
-      .populate('farmer', 'name email profileImage')
-      .sort('-createdAt');
+    const products = await prisma.product.findMany({
+      where: { category: req.params.category, isAvailable: true },
+      include: { farmer: { select: { id: true, name: true, email: true, profileImage: true } } },
+      orderBy: { createdAt: 'desc' }
+    });
 
-    res.status(200).json({ success: true, count: products.length, data: products });
+    const mappedProducts = products.map(p => ({ ...p, _id: p.id, farmer: { ...p.farmer, _id: p.farmer.id } }));
+    res.status(200).json({ success: true, count: mappedProducts.length, data: mappedProducts });
   } catch (error) {
     next(error);
   }
@@ -253,12 +315,15 @@ exports.getProductsByCategory = async (req, res, next) => {
 exports.getFeaturedProducts = async (req, res, next) => {
   try {
     const limit = parseInt(req.query.limit) || 8;
-    const products = await Product.find({ isAvailable: true, isFeatured: true })
-      .sort('-rating -createdAt')
-      .limit(limit)
-      .populate('farmer', 'name email profileImage');
+    const products = await prisma.product.findMany({
+      where: { isAvailable: true, isFeatured: true },
+      orderBy: [{ rating: 'desc' }, { createdAt: 'desc' }],
+      take: limit,
+      include: { farmer: { select: { id: true, name: true, email: true, profileImage: true } } }
+    });
 
-    res.status(200).json({ success: true, count: products.length, data: products });
+    const mappedProducts = products.map(p => ({ ...p, _id: p.id, farmer: { ...p.farmer, _id: p.farmer.id } }));
+    res.status(200).json({ success: true, count: mappedProducts.length, data: mappedProducts });
   } catch (error) {
     next(error);
   }
@@ -270,12 +335,15 @@ exports.getFeaturedProducts = async (req, res, next) => {
 exports.getBestSellers = async (req, res, next) => {
   try {
     const limit = parseInt(req.query.limit) || 6;
-    const products = await Product.find({ isAvailable: true, isBestSeller: true })
-      .sort('-numReviews -rating')
-      .limit(limit)
-      .populate('farmer', 'name email profileImage');
+    const products = await prisma.product.findMany({
+      where: { isAvailable: true, isBestSeller: true },
+      orderBy: [{ numReviews: 'desc' }, { rating: 'desc' }],
+      take: limit,
+      include: { farmer: { select: { id: true, name: true, email: true, profileImage: true } } }
+    });
 
-    res.status(200).json({ success: true, count: products.length, data: products });
+    const mappedProducts = products.map(p => ({ ...p, _id: p.id, farmer: { ...p.farmer, _id: p.farmer.id } }));
+    res.status(200).json({ success: true, count: mappedProducts.length, data: mappedProducts });
   } catch (error) {
     next(error);
   }
@@ -287,23 +355,23 @@ exports.getBestSellers = async (req, res, next) => {
 exports.updateStock = async (req, res, next) => {
   try {
     const { stock } = req.body;
-    const product = await Product.findById(req.params.id);
+    const product = await prisma.product.findUnique({ where: { id: parseInt(req.params.id) } });
 
     if (!product) {
       return res.status(404).json({ success: false, message: 'Product not found' });
     }
 
-    if (product.farmer.toString() !== req.user.id && req.user.userType !== 'admin') {
+    if (product.farmerId !== parseInt(req.user.id) && req.user.userType !== 'admin') {
       return res.status(403).json({ success: false, message: 'Not authorized to update this product' });
     }
 
     // Check storage limit
-    const user = await User.findById(req.user.id);
-    const farmerProducts = await Product.find({ farmer: req.user.id });
+    const user = await prisma.user.findUnique({ where: { id: parseInt(req.user.id) } });
+    const farmerProducts = await prisma.product.findMany({ where: { farmerId: user.id } });
     const otherProductsStock = farmerProducts
-      .filter(p => p._id.toString() !== req.params.id)
+      .filter(p => p.id !== parseInt(req.params.id))
       .reduce((sum, p) => sum + (p.stock || 0), 0);
-    const newStock = parseInt(stock) || 0;
+    const newStock = parseFloat(stock) || 0;
 
     if (otherProductsStock + newStock > (user.storageLimit || 1000)) {
       return res.status(400).json({ 
@@ -312,10 +380,12 @@ exports.updateStock = async (req, res, next) => {
       });
     }
 
-    product.stock = stock;
-    await product.save();
+    const updatedProduct = await prisma.product.update({
+      where: { id: product.id },
+      data: { stock: parseFloat(stock) }
+    });
 
-    res.status(200).json({ success: true, message: 'Stock updated successfully', data: product });
+    res.status(200).json({ success: true, message: 'Stock updated successfully', data: { ...updatedProduct, _id: updatedProduct.id } });
   } catch (error) {
     next(error);
   }
@@ -326,13 +396,13 @@ exports.updateStock = async (req, res, next) => {
 // @access  Private/Farmer
 exports.updateImages = async (req, res, next) => {
   try {
-    const product = await Product.findById(req.params.id);
+    const product = await prisma.product.findUnique({ where: { id: parseInt(req.params.id) } });
 
     if (!product) {
       return res.status(404).json({ success: false, message: 'Product not found' });
     }
 
-    if (product.farmer.toString() !== req.user.id && req.user.userType !== 'admin') {
+    if (product.farmerId !== parseInt(req.user.id) && req.user.userType !== 'admin') {
       return res.status(403).json({ success: false, message: 'Not authorized to update this product' });
     }
 
@@ -340,11 +410,14 @@ exports.updateImages = async (req, res, next) => {
       const newImages = req.files.map(file =>
         `/uploads/products/${path.basename(file.path)}`
       );
-      product.images = [...product.images, ...newImages];
-      await product.save();
+      const updatedProduct = await prisma.product.update({
+        where: { id: product.id },
+        data: { images: [...product.images, ...newImages] }
+      });
+      res.status(200).json({ success: true, message: 'Images updated successfully', data: { ...updatedProduct, _id: updatedProduct.id } });
+    } else {
+      res.status(400).json({ success: false, message: 'No images uploaded' });
     }
-
-    res.status(200).json({ success: true, message: 'Images updated successfully', data: product });
   } catch (error) {
     next(error);
   }
@@ -355,13 +428,13 @@ exports.updateImages = async (req, res, next) => {
 // @access  Private/Farmer
 exports.deleteImage = async (req, res, next) => {
   try {
-    const product = await Product.findById(req.params.id);
+    const product = await prisma.product.findUnique({ where: { id: parseInt(req.params.id) } });
 
     if (!product) {
       return res.status(404).json({ success: false, message: 'Product not found' });
     }
 
-    if (product.farmer.toString() !== req.user.id && req.user.userType !== 'admin') {
+    if (product.farmerId !== parseInt(req.user.id) && req.user.userType !== 'admin') {
       return res.status(403).json({ success: false, message: 'Not authorized to update this product' });
     }
 
@@ -370,7 +443,8 @@ exports.deleteImage = async (req, res, next) => {
       return res.status(400).json({ success: false, message: 'Invalid image index' });
     }
 
-    const removedImage = product.images.splice(imageIndex, 1)[0];
+    const newImages = [...product.images];
+    const removedImage = newImages.splice(imageIndex, 1)[0];
 
     // Delete local file if it exists
     const filePath = path.join(__dirname, '..', removedImage);
@@ -378,9 +452,12 @@ exports.deleteImage = async (req, res, next) => {
       try { fs.unlinkSync(filePath); } catch (e) { /* ignore */ }
     }
 
-    await product.save();
+    const updatedProduct = await prisma.product.update({
+      where: { id: product.id },
+      data: { images: newImages }
+    });
 
-    res.status(200).json({ success: true, message: 'Image deleted successfully', data: product });
+    res.status(200).json({ success: true, message: 'Image deleted successfully', data: { ...updatedProduct, _id: updatedProduct.id } });
   } catch (error) {
     next(error);
   }

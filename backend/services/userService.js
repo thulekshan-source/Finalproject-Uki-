@@ -1,12 +1,31 @@
 // backend/services/userService.js
-const User = require('../models/User');
+const prisma = require('../utils/prisma');
 const bcrypt = require('bcryptjs');
 
 const userService = {
   // Get all users
   async getAllUsers() {
     try {
-      return await User.find().select('-password');
+      return await prisma.user.findMany({
+        select: {
+          id: true,
+          name: true,
+          email: true,
+          userType: true,
+          phone: true,
+          address: true,
+          profileImage: true,
+          farmName: true,
+          location: true,
+          bio: true,
+          isVerified: true,
+          isActive: true,
+          totalEarnings: true,
+          storageLimit: true,
+          createdAt: true,
+          updatedAt: true
+        }
+      });
     } catch (error) {
       throw error;
     }
@@ -15,7 +34,27 @@ const userService = {
   // Get user by ID
   async getUserById(id) {
     try {
-      return await User.findById(id).select('-password');
+      return await prisma.user.findUnique({
+        where: { id: parseInt(id) },
+        select: {
+          id: true,
+          name: true,
+          email: true,
+          userType: true,
+          phone: true,
+          address: true,
+          profileImage: true,
+          farmName: true,
+          location: true,
+          bio: true,
+          isVerified: true,
+          isActive: true,
+          totalEarnings: true,
+          storageLimit: true,
+          createdAt: true,
+          updatedAt: true
+        }
+      });
     } catch (error) {
       throw error;
     }
@@ -27,7 +66,7 @@ const userService = {
       const { name, email, password, role } = userData;
       
       // Check if user exists
-      const existingUser = await User.findOne({ email });
+      const existingUser = await prisma.user.findUnique({ where: { email } });
       if (existingUser) {
         throw new Error('User already exists');
       }
@@ -37,14 +76,15 @@ const userService = {
       const hashedPassword = await bcrypt.hash(password, salt);
 
       // Create user
-      const user = new User({
-        name,
-        email,
-        password: hashedPassword,
-        role: role || 'customer'
+      const user = await prisma.user.create({
+        data: {
+          name,
+          email,
+          password: hashedPassword,
+          userType: role || 'customer'
+        }
       });
 
-      await user.save();
       return user;
     } catch (error) {
       throw error;
@@ -60,11 +100,28 @@ const userService = {
         updateData.password = await bcrypt.hash(updateData.password, salt);
       }
 
-      return await User.findByIdAndUpdate(
-        id,
-        { $set: updateData },
-        { new: true }
-      ).select('-password');
+      return await prisma.user.update({
+        where: { id: parseInt(id) },
+        data: updateData,
+        select: {
+          id: true,
+          name: true,
+          email: true,
+          userType: true,
+          phone: true,
+          address: true,
+          profileImage: true,
+          farmName: true,
+          location: true,
+          bio: true,
+          isVerified: true,
+          isActive: true,
+          totalEarnings: true,
+          storageLimit: true,
+          createdAt: true,
+          updatedAt: true
+        }
+      });
     } catch (error) {
       throw error;
     }
@@ -73,7 +130,9 @@ const userService = {
   // Delete user
   async deleteUser(id) {
     try {
-      return await User.findByIdAndDelete(id);
+      return await prisma.user.delete({
+        where: { id: parseInt(id) }
+      });
     } catch (error) {
       throw error;
     }
@@ -82,7 +141,7 @@ const userService = {
   // Find user by email (for login)
   async findByEmail(email) {
     try {
-      return await User.findOne({ email });
+      return await prisma.user.findUnique({ where: { email } });
     } catch (error) {
       throw error;
     }

@@ -16,7 +16,6 @@ const {
 } = require('../controllers/productController'); 
 const { protect, isFarmer, checkOwnership } = require('../middleware/auth');
 const { uploadMultiple, handleUploadError, cleanupTempFiles } = require('../middleware/upload');
-const Product = require('../models/Product');
 
 // Public routes
 router.get('/', getAllProducts);
@@ -40,25 +39,25 @@ router.post('/',
 
 router.put('/:id', 
   isFarmer,
-  checkOwnership(Product),
+  checkOwnership('Product'),
   updateProduct
 );
 
 router.delete('/:id', 
   isFarmer,
-  checkOwnership(Product),
+  checkOwnership('Product'),
   deleteProduct
 );
 
 router.patch('/:id/stock', 
   isFarmer,
-  checkOwnership(Product),
+  checkOwnership('Product'),
   updateStock
 );
 
 router.put('/:id/images',
   isFarmer,
-  checkOwnership(Product),
+  checkOwnership('Product'),
   uploadMultiple('images', 5),
   handleUploadError,
   updateImages,
@@ -67,7 +66,7 @@ router.put('/:id/images',
 
 router.delete('/:id/images/:imageIndex',
   isFarmer,
-  checkOwnership(Product),
+  checkOwnership('Product'),
   deleteImage
 );
 

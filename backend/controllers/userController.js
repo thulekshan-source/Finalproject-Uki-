@@ -1,6 +1,4 @@
-const User = require('../models/User');
-const Product = require('../models/Product');
-const Order = require('../models/Order');
+const prisma = require('../utils/prisma');
 const fs = require('fs');
 const path = require('path');
 
@@ -9,9 +7,9 @@ const path = require('path');
 // @access  Private
 exports.getUserProfile = async (req, res, next) => {
   try {
-    const user = await User.findById(req.user.id);
+    const user = await prisma.user.findUnique({ where: { id: parseInt(req.user.id) } });
     if (!user) return res.status(404).json({ success: false, message: 'User not found' });
-    res.status(200).json({ success: true, data: user });
+    res.status(200).json({ success: true, data: { ...user, _id: user.id } });
   } catch (error) {
     next(error);
   }
@@ -28,21 +26,24 @@ exports.updateUserProfile = async (req, res, next) => {
       if (req.body[field] !== undefined) updateData[field] = req.body[field];
     });
 
-    const user = await User.findByIdAndUpdate(req.user.id, updateData, { new: true, runValidators: true });
-    res.status(200).json({ success: true, message: 'Profile updated successfully', data: user });
+    const user = await prisma.user.update({
+      where: { id: parseInt(req.user.id) },
+      data: updateData
+    });
+    res.status(200).json({ success: true, message: 'Profile updated successfully', data: { ...user, _id: user.id } });
   } catch (error) {
     next(error);
   }
 };
 
-// @desc    Update profile image (local storage)
+// @desc    Update profile image
 // @route   PUT /api/users/profile/image
 // @access  Private
 exports.updateProfileImage = async (req, res, next) => {
   try {
     if (!req.file) return res.status(400).json({ success: false, message: 'Please upload an image' });
 
-    const user = await User.findById(req.user.id);
+    const user = await prisma.user.findUnique({ where: { id: parseInt(req.user.id) } });
 
     // Delete old local profile image if it exists
     if (user.profileImage) {
@@ -52,10 +53,12 @@ exports.updateProfileImage = async (req, res, next) => {
       }
     }
 
-    user.profileImage = `/uploads/profiles/${path.basename(req.file.path)}`;
-    await user.save();
+    const updatedUser = await prisma.user.update({
+      where: { id: user.id },
+      data: { profileImage: `/uploads/profiles/${path.basename(req.file.path)}` }
+    });
 
-    res.status(200).json({ success: true, message: 'Profile image updated successfully', data: user });
+    res.status(200).json({ success: true, message: 'Profile image updated successfully', data: { ...updatedUser, _id: updatedUser.id } });
   } catch (error) {
     next(error);
   }
@@ -66,46 +69,69 @@ exports.updateProfileImage = async (req, res, next) => {
 // @access  Private
 exports.getDashboardStats = async (req, res, next) => {
   try {
-    const user = await User.findById(req.user.id);
+    const user = await prisma.user.findUnique({ where: { id: parseInt(req.user.id) } });
     let stats = {};
 
     if (user.userType === 'farmer') {
-      const products = await Product.countDocuments({ farmer: req.user.id });
-      const totalOrders = await Order.countDocuments({ farmer: req.user.id });
-      const revenueResult = await Order.aggregate([
-        { $match: { farmer: req.user._id, paymentStatus: 'paid' } },
-        { $group: { _id: null, total: { $sum: '$totalPrice' } } }
+      const [productsCount, totalOrdersCount, revenueResult, pendingOrdersCount, processingOrdersCount, deliveredOrdersCount, recentOrders] = await Promise.all([
+        prisma.product.count({ where: { farmerId: user.id } }),
+        prisma.order.count({ where: { farmerId: user.id } }),
+        prisma.order.aggregate({
+          where: { farmerId: user.id, paymentStatus: 'paid' },
+          _sum: { totalPrice: true }
+        }),
+        prisma.order.count({ where: { farmerId: user.id, orderStatus: 'pending' } }),
+        prisma.order.count({ where: { farmerId: user.id, orderStatus: 'processing' } }),
+        prisma.order.count({ where: { farmerId: user.id, orderStatus: 'delivered' } }),
+        prisma.order.findMany({
+          where: { farmerId: user.id },
+          orderBy: { createdAt: 'desc' },
+          take: 5,
+          include: { user: { select: { name: true, email: true } } }
+        })
       ]);
-      const pendingOrders = await Order.countDocuments({ farmer: req.user.id, orderStatus: 'pending' });
-      const processingOrders = await Order.countDocuments({ farmer: req.user.id, orderStatus: 'processing' });
-      const deliveredOrders = await Order.countDocuments({ farmer: req.user.id, orderStatus: 'delivered' });
-      const recentOrders = await Order.find({ farmer: req.user.id })
-        .sort('-createdAt').limit(5).populate('user', 'name email').select('orderStatus totalPrice createdAt');
-      const lowStockProducts = await Product.find({ farmer: req.user.id, stock: { $lt: 10 }, isAvailable: true }).limit(5);
+
+      const lowStockProducts = await prisma.product.findMany({
+        where: { farmerId: user.id, stock: { lt: 10 }, isAvailable: true },
+        take: 5
+      });
 
       stats = {
-        products, totalOrders,
-        revenue: revenueResult[0]?.total || 0,
-        pendingOrders, processingOrders, deliveredOrders,
-        recentOrders, lowStockProducts,
-        averageOrderValue: revenueResult[0]?.total ? (revenueResult[0].total / totalOrders).toFixed(2) : 0
+        products: productsCount,
+        totalOrders: totalOrdersCount,
+        revenue: revenueResult._sum.totalPrice || 0,
+        pendingOrders: pendingOrdersCount,
+        processingOrders: processingOrdersCount,
+        deliveredOrders: deliveredOrdersCount,
+        recentOrders: recentOrders.map(o => ({ ...o, _id: o.id, user: { ...o.user, _id: o.user.id } })),
+        lowStockProducts: lowStockProducts.map(p => ({ ...p, _id: p.id })),
+        averageOrderValue: totalOrdersCount > 0 ? ((revenueResult._sum.totalPrice || 0) / totalOrdersCount).toFixed(2) : 0
       };
     } else {
-      const orders = await Order.countDocuments({ user: req.user.id });
-      const totalSpentResult = await Order.aggregate([
-        { $match: { user: req.user._id, paymentStatus: 'paid' } },
-        { $group: { _id: null, total: { $sum: '$totalPrice' } } }
+      const [ordersCount, totalSpentResult, pendingOrdersCount, deliveredOrdersCount, recentOrders] = await Promise.all([
+        prisma.order.count({ where: { userId: user.id } }),
+        prisma.order.aggregate({
+          where: { userId: user.id, paymentStatus: 'paid' },
+          _sum: { totalPrice: true }
+        }),
+        prisma.order.count({ where: { userId: user.id, orderStatus: { in: ['pending', 'processing'] } } }),
+        prisma.order.count({ where: { userId: user.id, orderStatus: 'delivered' } }),
+        prisma.order.findMany({
+          where: { userId: user.id },
+          orderBy: { createdAt: 'desc' },
+          take: 5,
+          include: { farmer: { select: { id: true, name: true, farmName: true } } }
+        })
       ]);
-      const pendingOrders = await Order.countDocuments({ user: req.user.id, orderStatus: { $in: ['pending', 'processing'] } });
-      const deliveredOrders = await Order.countDocuments({ user: req.user.id, orderStatus: 'delivered' });
-      const recentOrders = await Order.find({ user: req.user.id })
-        .sort('-createdAt').limit(5).populate('farmer', 'name farmName').select('orderStatus totalPrice createdAt items');
 
       stats = {
-        orders, totalSpent: totalSpentResult[0]?.total || 0,
-        pendingOrders, deliveredOrders, recentOrders,
-        favorites: user.favorites || [],
-        averageOrderValue: totalSpentResult[0]?.total ? (totalSpentResult[0].total / orders).toFixed(2) : 0
+        orders: ordersCount,
+        totalSpent: totalSpentResult._sum.totalPrice || 0,
+        pendingOrders: pendingOrdersCount,
+        deliveredOrders: deliveredOrdersCount,
+        recentOrders: recentOrders.map(o => ({ ...o, _id: o.id, farmer: { ...o.farmer, _id: o.farmer.id } })),
+        favorites: [],
+        averageOrderValue: ordersCount > 0 ? ((totalSpentResult._sum.totalPrice || 0) / ordersCount).toFixed(2) : 0
       };
     }
 
@@ -122,19 +148,32 @@ exports.getUserOrders = async (req, res, next) => {
   try {
     let orders;
     if (req.user.userType === 'farmer') {
-      orders = await Order.find({ farmer: req.user.id })
-        .populate('user', 'name email phone').populate('items.product', 'name images').sort('-createdAt');
+      orders = await prisma.order.findMany({
+        where: { farmerId: parseInt(req.user.id) },
+        include: { user: { select: { id: true, name: true, email: true, phone: true } }, items: { include: { product: { select: { name: true, images: true } } } } },
+        orderBy: { createdAt: 'desc' }
+      });
     } else {
-      orders = await Order.find({ user: req.user.id })
-        .populate('farmer', 'name farmName profileImage').populate('items.product', 'name images').sort('-createdAt');
+      orders = await prisma.order.findMany({
+        where: { userId: parseInt(req.user.id) },
+        include: { farmer: { select: { id: true, name: true, farmName: true, profileImage: true } }, items: { include: { product: { select: { name: true, images: true } } } } },
+        orderBy: { createdAt: 'desc' }
+      });
     }
-    res.status(200).json({ success: true, count: orders.length, data: orders });
+    const mappedOrders = orders.map(o => ({
+      ...o,
+      _id: o.id,
+      user: o.user ? { ...o.user, _id: o.user.id } : null,
+      farmer: o.farmer ? { ...o.farmer, _id: o.farmer.id } : null,
+      items: o.items.map(i => ({ ...i, _id: i.id }))
+    }));
+    res.status(200).json({ success: true, count: mappedOrders.length, data: mappedOrders });
   } catch (error) {
     next(error);
   }
 };
 
-// @desc    Get user's products (farmers only)
+// @desc    Get user's products
 // @route   GET /api/users/products
 // @access  Private/Farmer
 exports.getUserProducts = async (req, res, next) => {
@@ -142,8 +181,11 @@ exports.getUserProducts = async (req, res, next) => {
     if (req.user.userType !== 'farmer') {
       return res.status(403).json({ success: false, message: 'Only farmers can view their products' });
     }
-    const products = await Product.find({ farmer: req.user.id }).sort('-createdAt');
-    res.status(200).json({ success: true, count: products.length, data: products });
+    const products = await prisma.product.findMany({
+      where: { farmerId: parseInt(req.user.id) },
+      orderBy: { createdAt: 'desc' }
+    });
+    res.status(200).json({ success: true, count: products.length, data: products.map(p => ({ ...p, _id: p.id })) });
   } catch (error) {
     next(error);
   }
@@ -154,15 +196,16 @@ exports.getUserProducts = async (req, res, next) => {
 // @access  Private
 exports.addToFavorites = async (req, res, next) => {
   try {
-    const user = await User.findById(req.user.id);
-    const product = await Product.findById(req.params.productId);
-    if (!product) return res.status(404).json({ success: false, message: 'Product not found' });
-    if (user.favorites.includes(req.params.productId)) {
+    const existingFav = await prisma.favorite.findUnique({
+      where: { userId_productId: { userId: parseInt(req.user.id), productId: parseInt(req.params.productId) } }
+    });
+    if (existingFav) {
       return res.status(400).json({ success: false, message: 'Product already in favorites' });
     }
-    user.favorites.push(req.params.productId);
-    await user.save();
-    res.status(200).json({ success: true, message: 'Product added to favorites', data: user.favorites });
+    await prisma.favorite.create({
+      data: { userId: parseInt(req.user.id), productId: parseInt(req.params.productId) }
+    });
+    res.status(200).json({ success: true, message: 'Product added to favorites' });
   } catch (error) {
     next(error);
   }
@@ -173,13 +216,10 @@ exports.addToFavorites = async (req, res, next) => {
 // @access  Private
 exports.removeFromFavorites = async (req, res, next) => {
   try {
-    const user = await User.findById(req.user.id);
-    if (!user.favorites.includes(req.params.productId)) {
-      return res.status(400).json({ success: false, message: 'Product not in favorites' });
-    }
-    user.favorites = user.favorites.filter(id => id.toString() !== req.params.productId);
-    await user.save();
-    res.status(200).json({ success: true, message: 'Product removed from favorites', data: user.favorites });
+    await prisma.favorite.delete({
+      where: { userId_productId: { userId: parseInt(req.user.id), productId: parseInt(req.params.productId) } }
+    });
+    res.status(200).json({ success: true, message: 'Product removed from favorites' });
   } catch (error) {
     next(error);
   }
@@ -190,8 +230,12 @@ exports.removeFromFavorites = async (req, res, next) => {
 // @access  Private
 exports.getFavorites = async (req, res, next) => {
   try {
-    const user = await User.findById(req.user.id).populate('favorites');
-    res.status(200).json({ success: true, count: user.favorites.length, data: user.favorites });
+    const favs = await prisma.favorite.findMany({
+      where: { userId: parseInt(req.user.id) },
+      include: { product: true }
+    });
+    const products = favs.map(f => ({ ...f.product, _id: f.product.id }));
+    res.status(200).json({ success: true, count: products.length, data: products });
   } catch (error) {
     next(error);
   }
@@ -202,12 +246,8 @@ exports.getFavorites = async (req, res, next) => {
 // @access  Private/Admin
 exports.getAllUsers = async (req, res, next) => {
   try {
-    const page = parseInt(req.query.page, 10) || 1;
-    const limit = parseInt(req.query.limit, 10) || 20;
-    const skip = (page - 1) * limit;
-    const users = await User.find().select('-password').skip(skip).limit(limit).sort('-createdAt');
-    const total = await User.countDocuments();
-    res.status(200).json({ success: true, count: users.length, total, totalPages: Math.ceil(total / limit), currentPage: page, data: users });
+    const users = await prisma.user.findMany({ orderBy: { createdAt: 'desc' } });
+    res.status(200).json({ success: true, count: users.length, data: users.map(u => ({ ...u, _id: u.id, password: undefined })) });
   } catch (error) {
     next(error);
   }
@@ -218,9 +258,9 @@ exports.getAllUsers = async (req, res, next) => {
 // @access  Private/Admin
 exports.getUser = async (req, res, next) => {
   try {
-    const user = await User.findById(req.params.id).select('-password');
+    const user = await prisma.user.findUnique({ where: { id: parseInt(req.params.id) } });
     if (!user) return res.status(404).json({ success: false, message: 'User not found' });
-    res.status(200).json({ success: true, data: user });
+    res.status(200).json({ success: true, data: { ...user, _id: user.id, password: undefined } });
   } catch (error) {
     next(error);
   }
@@ -231,10 +271,10 @@ exports.getUser = async (req, res, next) => {
 // @access  Private/Admin
 exports.updateUser = async (req, res, next) => {
   try {
-    if (req.body.password) delete req.body.password;
-    const user = await User.findByIdAndUpdate(req.params.id, req.body, { new: true, runValidators: true }).select('-password');
-    if (!user) return res.status(404).json({ success: false, message: 'User not found' });
-    res.status(200).json({ success: true, data: user });
+    const data = { ...req.body };
+    if (data.password) delete data.password;
+    const user = await prisma.user.update({ where: { id: parseInt(req.params.id) }, data });
+    res.status(200).json({ success: true, data: { ...user, _id: user.id, password: undefined } });
   } catch (error) {
     next(error);
   }
@@ -245,12 +285,10 @@ exports.updateUser = async (req, res, next) => {
 // @access  Private/Admin
 exports.deleteUser = async (req, res, next) => {
   try {
-    const user = await User.findById(req.params.id);
-    if (!user) return res.status(404).json({ success: false, message: 'User not found' });
-    if (user._id.toString() === req.user.id) {
+    if (parseInt(req.params.id) === parseInt(req.user.id)) {
       return res.status(400).json({ success: false, message: 'You cannot delete your own account' });
     }
-    await user.deleteOne();
+    await prisma.user.delete({ where: { id: parseInt(req.params.id) } });
     res.status(200).json({ success: true, message: 'User deleted successfully' });
   } catch (error) {
     next(error);
@@ -262,11 +300,8 @@ exports.deleteUser = async (req, res, next) => {
 // @access  Private/Admin
 exports.deactivateUser = async (req, res, next) => {
   try {
-    const user = await User.findById(req.params.id);
-    if (!user) return res.status(404).json({ success: false, message: 'User not found' });
-    user.isActive = false;
-    await user.save();
-    res.status(200).json({ success: true, message: 'User deactivated successfully', data: user });
+    const user = await prisma.user.update({ where: { id: parseInt(req.params.id) }, data: { isActive: false } });
+    res.status(200).json({ success: true, message: 'User deactivated successfully', data: { ...user, _id: user.id } });
   } catch (error) {
     next(error);
   }
@@ -277,11 +312,8 @@ exports.deactivateUser = async (req, res, next) => {
 // @access  Private/Admin
 exports.activateUser = async (req, res, next) => {
   try {
-    const user = await User.findById(req.params.id);
-    if (!user) return res.status(404).json({ success: false, message: 'User not found' });
-    user.isActive = true;
-    await user.save();
-    res.status(200).json({ success: true, message: 'User activated successfully', data: user });
+    const user = await prisma.user.update({ where: { id: parseInt(req.params.id) }, data: { isActive: true } });
+    res.status(200).json({ success: true, message: 'User activated successfully', data: { ...user, _id: user.id } });
   } catch (error) {
     next(error);
   }
