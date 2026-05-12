@@ -51,8 +51,12 @@ app.use((req, res) => {
 // global error handler
 app.use(errorHandler);
 
-// original had no fallback port — would silently fail without PORT in .env
-const PORT = process.env.PORT || 5000;
-app.listen(PORT, () => {
-  console.log(`Server running on port ${PORT} in ${process.env.NODE_ENV || 'development'} mode`);
-});
+// Only listen if not running as a Vercel function
+if (process.env.NODE_ENV !== 'production' || !process.env.VERCEL) {
+  const PORT = process.env.PORT || 5000;
+  app.listen(PORT, () => {
+    console.log(`Server running on port ${PORT} in ${process.env.NODE_ENV || 'development'} mode`);
+  });
+}
+
+module.exports = app;

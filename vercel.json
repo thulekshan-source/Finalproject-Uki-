@@ -7,9 +7,17 @@
       "config": {
         "distDir": "farm-direct-frontend/build"
       }
+    },
+    {
+      "src": "backend/server.js",
+      "use": "@vercel/node"
     }
   ],
   "rewrites": [
+    {
+      "source": "/api/(.*)",
+      "destination": "backend/server.js"
+    },
     {
       "source": "/(.*)",
       "destination": "/index.html"
