@@ -1,0 +1,10 @@
+{
+  "name": "farm-direct-root",
+  "version": "1.0.0",
+  "main": "index.js",
+  "private": true,
+  "scripts": {
+    "build": "cd farm-direct-frontend && npm install && npm run build",
+    "install": "cd farm-direct-frontend && npm install"
+  }
+}

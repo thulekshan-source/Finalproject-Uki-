@@ -1,9 +1,18 @@
 {
   "version": 2,
-  "buildCommand": "cd farm-direct-frontend && npm install && npm run build",
-  "outputDirectory": "farm-direct-frontend/build",
-  "framework": null,
+  "builds": [
+    {
+      "src": "package.json",
+      "use": "@vercel/static-build",
+      "config": {
+        "distDir": "farm-direct-frontend/build"
+      }
+    }
+  ],
   "rewrites": [
-    { "source": "/(.*)", "destination": "/index.html" }
+    {
+      "source": "/(.*)",
+      "destination": "/index.html"
+    }
   ]
 }
