@@ -1,6 +1,8 @@
 const prisma = require('../utils/prisma');
 const bcrypt = require('bcryptjs');
 const jwt = require('jsonwebtoken');
+const crypto = require('crypto');
+const { sendEmail } = require('../utils/sendEmail');
 
 // Helper to generate signed JWT token
 const getSignedJwtToken = (userId) => {
@@ -31,7 +33,11 @@ exports.register = async (req, res) => {
     const salt = await bcrypt.genSalt(10);
     const hashedPassword = await bcrypt.hash(password, salt);
 
-    // Create user
+    // Create verification token
+    const verificationToken = crypto.randomBytes(20).toString('hex');
+    const verificationTokenExpires = new Date(Date.now() + 10 * 60 * 1000); // 10 minutes
+
+    // Create user with verification fields
     const user = await prisma.user.create({
       data: {
         name,
@@ -39,25 +45,43 @@ exports.register = async (req, res) => {
         password: hashedPassword,
         userType: userType || 'customer',
         phone: phone || '',
-        address: (typeof address === 'string' ? address : '') || ''
+        address: (typeof address === 'string' ? address : '') || '',
+        verificationToken,
+        verificationTokenExpires
       }
     });
 
-    // Generate token
+    // Send verification email (best-effort)
+    try {
+      const verifyUrl = `${process.env.FRONTEND_URL || ''}/verify-email/${verificationToken}`;
+      const html = `
+        <p>Hello ${user.name || 'user'},</p>
+        <p>Thanks for registering. Please verify your email by clicking the link below:</p>
+        <a href="${verifyUrl}">Verify Email</a>
+        <p>This link expires in 10 minutes.</p>
+      `;
+
+      await sendEmail({ email: user.email, subject: 'Verify your FreshFarm account', html });
+    } catch (err) {
+      console.error('Error sending verification email:', err);
+    }
+
+    // Generate JWT for immediate use (optional)
     const token = getSignedJwtToken(user.id);
 
     res.status(201).json({
       success: true,
-      message: 'Registration successful',
+      message: 'Registration successful; verification email sent',
       token,
       user: {
-        _id: user.id, // Keep _id for frontend compatibility
+        _id: user.id,
         id: user.id,
         name: user.name,
         email: user.email,
         userType: user.userType,
         phone: user.phone,
-        address: user.address
+        address: user.address,
+        isVerified: user.isVerified
       }
     });
 
@@ -68,6 +92,40 @@ exports.register = async (req, res) => {
       message: 'Registration failed',
       error: error.message
     });
+  }
+};
+
+// @desc    Verify user's email
+// @route   GET /api/auth/verify/:token
+// @access  Public
+exports.verifyEmail = async (req, res) => {
+  try {
+    const { token } = req.params;
+
+    if (!token) {
+      return res.status(400).json({ success: false, message: 'Token is required' });
+    }
+
+    const user = await prisma.user.findFirst({ where: { verificationToken: token } });
+
+    if (!user) {
+      return res.status(400).json({ success: false, message: 'Invalid or expired token' });
+    }
+
+    if (user.verificationTokenExpires && new Date(user.verificationTokenExpires) < new Date()) {
+      return res.status(400).json({ success: false, message: 'Verification token has expired' });
+    }
+
+    await prisma.user.update({
+      where: { id: user.id },
+      data: { isVerified: true, verificationToken: null, verificationTokenExpires: null }
+    });
+
+    res.status(200).json({ success: true, message: 'Email successfully verified' });
+
+  } catch (error) {
+    console.error('Verify email error:', error);
+    res.status(500).json({ success: false, message: 'Failed to verify email' });
   }
 };
 

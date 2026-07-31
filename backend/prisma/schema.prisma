@@ -25,6 +25,8 @@ model User {
   location      String?  @default("")
   bio           String?  @default("")
   isVerified    Boolean  @default(false)
+  verificationToken String?
+  verificationTokenExpires DateTime?
   isActive      Boolean  @default(true)
   totalEarnings Float    @default(0)
   storageLimit  Float    @default(1000)

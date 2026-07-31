@@ -5,7 +5,7 @@ const API_URL = process.env.REACT_APP_API_URL || '/api';
 const api = axios.create({
   baseURL: API_URL,
   headers: { 'Content-Type': 'application/json' },
-  timeout: 10000,
+  timeout: 30000,
 });
 
 // Attach token to every request
@@ -35,7 +35,7 @@ export const authAPI = {
   register: (userData) => api.post('/auth/register', userData),
   getMe: () => api.get('/auth/me'),
   updateDetails: (data) => api.put('/auth/updatedetails', data),
-  updatePassword: (currentPassword, newPassword) => 
+  updatePassword: (currentPassword, newPassword) =>
     api.put('/auth/updatepassword', { currentPassword, newPassword }),
 };
 

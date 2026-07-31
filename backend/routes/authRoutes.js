@@ -7,11 +7,13 @@ const {
   updateDetails, 
   updatePassword 
 } = require('../controllers/authController');
+const { verifyEmail } = require('../controllers/authController');
 const { protect } = require('../middleware/auth');
 
 // Public routes
 router.post('/register', register);
 router.post('/login', login);
+router.get('/verify/:token', verifyEmail);
 
 // Protected routes
 router.get('/me', protect, getMe);

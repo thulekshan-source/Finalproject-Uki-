@@ -159,6 +159,13 @@ exports.createProduct = async (req, res, next) => {
       });
     }
 
+    let productImages = [];
+    if (req.files && req.files.length > 0) {
+      productImages = req.files.map(file => `/uploads/products/${path.basename(file.path)}`);
+    } else if (images) {
+      productImages = Array.isArray(images) ? images : [images];
+    }
+
     const product = await prisma.product.create({
       data: {
         name,
@@ -169,7 +176,7 @@ exports.createProduct = async (req, res, next) => {
         stock: parseFloat(stock),
         farmerId: user.id,
         farmName: user.farmName || user.name,
-        images: images || [],
+        images: productImages,
         isOrganic: isOrganic === 'true' || isOrganic === true,
         tags: tags || [],
         minOrderQuantity: parseFloat(minOrderQuantity) || 1,
@@ -206,6 +213,14 @@ exports.updateProduct = async (req, res, next) => {
     const updateData = { ...req.body };
     if (updateData.price) updateData.price = parseFloat(updateData.price);
     if (updateData.stock) updateData.stock = parseFloat(updateData.stock);
+
+    let productImages = product.images; // fallback to existing images
+    if (req.files && req.files.length > 0) {
+      productImages = req.files.map(file => `/uploads/products/${path.basename(file.path)}`);
+    } else if (req.body.images) {
+      productImages = Array.isArray(req.body.images) ? req.body.images : [req.body.images];
+    }
+    updateData.images = productImages;
 
     // Check storage limit if stock is being updated
     if (updateData.stock !== undefined) {

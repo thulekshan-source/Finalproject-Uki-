@@ -40,7 +40,10 @@ router.post('/',
 router.put('/:id', 
   isFarmer,
   checkOwnership('Product'),
-  updateProduct
+  uploadMultiple('images', 5),
+  handleUploadError,
+  updateProduct,
+  cleanupTempFiles
 );
 
 router.delete('/:id', 

@@ -1,4 +1,5 @@
 const nodemailer = require('nodemailer');
+const https = require('https');
 
 // Create transporter
 const createTransporter = () => {
@@ -32,6 +33,65 @@ const createTransporter = () => {
 // Send email
 exports.sendEmail = async (options) => {
   try {
+    // If RESEND_API_KEY is set, use Resend API
+    if (process.env.RESEND_API_KEY) {
+      const payload = {
+        from: process.env.EMAIL_FROM || process.env.EMAIL_USER || 'no-reply@freshfarm.com',
+        to: options.email,
+        subject: options.subject,
+        html: options.html
+      };
+
+      // Prefer global fetch when available
+      if (typeof fetch === 'function') {
+        const res = await fetch('https://api.resend.com/emails', {
+          method: 'POST',
+          headers: {
+            'Content-Type': 'application/json',
+            'Authorization': `Bearer ${process.env.RESEND_API_KEY}`
+          },
+          body: JSON.stringify(payload)
+        });
+
+        const data = await res.json();
+        console.log('📧 Resend response:', data);
+        return { success: true, messageId: data.id || null };
+      }
+
+      // Fallback to native https if fetch not available
+      await new Promise((resolve, reject) => {
+        const req = https.request(
+          'https://api.resend.com/emails',
+          {
+            method: 'POST',
+            headers: {
+              'Content-Type': 'application/json',
+              'Authorization': `Bearer ${process.env.RESEND_API_KEY}`
+            }
+          },
+          (res) => {
+            let body = '';
+            res.on('data', (chunk) => (body += chunk));
+            res.on('end', () => {
+              try {
+                const parsed = JSON.parse(body || '{}');
+                console.log('📧 Resend response:', parsed);
+                resolve(parsed);
+              } catch (err) {
+                resolve({});
+              }
+            });
+          }
+        );
+
+        req.on('error', (err) => reject(err));
+        req.write(JSON.stringify(payload));
+        req.end();
+      });
+
+      return { success: true };
+    }
+
     const transporter = await createTransporter();
 
     const mailOptions = {
@@ -45,7 +105,7 @@ exports.sendEmail = async (options) => {
     const info = await transporter.sendMail(mailOptions);
     
     // In development with ethereal, log the preview URL
-    if (process.env.NODE_ENV === 'development' && info.messageId.includes('ethereal')) {
+    if (process.env.NODE_ENV === 'development' && info.messageId && info.messageId.includes('ethereal')) {
       console.log('📧 Email sent! Preview URL:', nodemailer.getTestMessageUrl(info));
     } else {
       console.log('📧 Email sent:', info.messageId);

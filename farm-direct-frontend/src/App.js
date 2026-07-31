@@ -14,6 +14,7 @@ import AdminDashboard from './components/AdminDashbord';
 import FarmerDashboard from './components/FarmerDashboard';
 import SellerDashboard from './components/SellerDashboard';
 import MyOrders from './components/MyOrders';
+import AIChatbot from './components/AIChatbot';
 
 import './styles/App.css';
 import './styles/Auth.css';
@@ -199,6 +200,7 @@ function App() {
         </Routes>
 
         <Footer />
+        <AIChatbot user={user} />
       </div>
     </Router>
   );
