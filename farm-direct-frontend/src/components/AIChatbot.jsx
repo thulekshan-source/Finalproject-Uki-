@@ -71,7 +71,6 @@ const AIChatbot = ({ user }) => {
   const [hasNewMsg, setHasNewMsg] = useState(true);
 
   const messagesEndRef = useRef(null);
-  const inputRef = useRef(null);
   const textareaRef = useRef(null);
 
   // Auto-scroll to bottom on new messages
